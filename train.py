@@ -87,15 +87,15 @@ class DreamerConfig:
     episodes: int = 100_000
 
     # Checkpoint
-    checkpoint_save_interval_per_episode: int = 100
+    checkpoint_save_interval_per_step: int = 5000
     
     # Logging
     avg_reward_window: int = 100
-    log_interval_per_episode: int = 1
-    video_interval: int = 5
+    log_interval_per_step: int = 50
+    video_interval_per_episode: int = 5
     recon_log_interval: int = 500
     recon_log_images: int = 8
-    recon_log_video_frames: int = 128
+    recon_log_video_frames: int = 64
     wandb_key: str = "../wandb.txt"
 
 
@@ -867,7 +867,7 @@ def train_dreamer(args):
     env = make_vec_env(
         args.env, 
         num_envs=config.num_envs, 
-        video_interval=config.video_interval
+        video_interval=config.video_interval_per_episode
     )
     
     obs_shape = env.single_observation_space.shape
@@ -951,7 +951,6 @@ def train_dreamer(args):
             for idx in reset_indices:
                 episode_history.append(episode_scores[idx])
                 episode_scores[idx] = 0
-        num_episodes = len(episode_history)
 
         step_counter += 1
         agent.set_env_step(step_counter)
@@ -967,13 +966,13 @@ def train_dreamer(args):
                     else:
                         avg_losses[k].append(v)
 
-        if num_episodes > prev_num_episodes and num_episodes % config.log_interval_per_episode == 0:
+        if step_counter % config.log_interval_per_step == 0:
             # Logging rewards
             avg_score = np.mean(episode_history[-config.avg_reward_window:]) if episode_history else 0
             mem_size = agent.replay_buffer.size()
             log_rewards(
                 step_counter, avg_score, best_score, mem_size,
-                num_episodes, config.episodes
+                len(episode_history), config.episodes
             )
 
             # Logging losses
@@ -984,7 +983,7 @@ def train_dreamer(args):
                 avg_losses = {}
 
         # Periodic checkpoint saving (every 1000 episodes)
-        if num_episodes > prev_num_episodes and num_episodes % config.checkpoint_save_interval_per_episode == 0:
+        if step_counter % config.checkpoint_save_interval_per_step == 0:
             agent.save_checkpoint(
                 save_prefix, step_counter, episode_history,
                 best_score, best_avg, wandb_run_id, config,
@@ -1007,8 +1006,6 @@ def train_dreamer(args):
                 best_score, best_avg, wandb_run_id, config,
                 checkpoint_type="best_avg"
             )
-
-        prev_num_episodes = num_episodes
 
     print(f"\n✓ Training complete! Best average score: {best_avg:.2f}")
     agent.save_checkpoint(
