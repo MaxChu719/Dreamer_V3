@@ -28,19 +28,26 @@ def log_hparams(config, run_name, resume_id=None):
     with open(config.wandb_key, "r", encoding="utf-8") as f:
         os.environ["WANDB_API_KEY"] = f.read().strip()
 
+    resume_success = False
     if resume_id:
-        # Resume existing run
-        wandb.init(
-            project="dreamerv3-atari-v2",
-            id=resume_id,
-            resume="must",
-            config=vars(config),
-        )
-        print(f"Resumed wandb run: {resume_id}")
-    else:
+        try:
+            # Resume existing run
+            wandb.init(
+                project="dreamerv3-atari",
+                id=resume_id,
+                resume="allow",
+                config=vars(config),
+            )
+            print(f"Resumed wandb run: {resume_id}")
+            resume_success = True
+        except Exception as e:
+            print(e)
+            print(f"Failed to resume wandb run: {resume_id}")
+
+    if not resume_id or not resume_success:
         # Start new run
         wandb.init(
-            project="dreamerv3-atari-v2",
+            project="dreamerv3-atari",
             name=run_name,
             config=vars(config),
             save_code=True,
