@@ -38,50 +38,6 @@ torch.backends.cudnn.benchmark = True
 class DreamerConfig:
     """
     Hyperparameters for DreamerV3 training.
-    
-    Architecture:
-        embed_dim: Observation encoder output dimension
-        base_cnn_channels: Base channel count for CNN layers
-        latent_dim: Number of categorical variables in stochastic state
-        num_classes: Number of classes per categorical variable
-        deter_dim: Dimension of deterministic GRU state
-        
-    Training:
-        lr: Learning rate for world model
-        actor_lr: Learning rate for actor
-        critic_lr: Learning rate for critic
-        eps: Epsilon for numerical stability in optimizer
-        discount: Discount factor for rewards
-        gae_lambda: Lambda parameter for GAE
-        entropy_coef: Entropy regularization coefficient
-        
-    World Model:
-        rep_loss_scale: Scale for representation loss
-        free_bits: KL divergence lower bound
-        
-    Replay and Updates:
-        capacity: Total replay buffer capacity
-        num_envs: Number of parallel environments (Batch size for training)
-        sequence_length: Length of sequences for training
-        min_buffer_size: Minimum buffer size before training
-        update_interval: Update every N environment steps
-        updates_per_step: Number of gradient updates per interval
-        
-    Imagination:
-        imagination_horizon: Steps to imagine ahead for actor-critic
-        
-    Value Learning:
-        critic_bins: Number of bins for two-hot value encoding
-        critic_ema_decay: EMA decay for target critic
-        retnorm_scale: Scale for return normalization
-        retnorm_limit: Minimum normalization scale
-        retnorm_decay: Decay rate for return normalization
-        
-    Logging:
-        video_interval: Log video every N episodes
-        recon_log_interval: Log reconstruction previews every N learner steps
-        recon_log_images: Number of samples in reconstruction grid
-        recon_log_video_frames: Number of frames for reconstruction video
     """
     
     # Architecture
@@ -134,6 +90,8 @@ class DreamerConfig:
     checkpoint_save_interval_per_episode: int = 100
     
     # Logging
+    avg_reward_window: int = 100
+    log_interval_per_episode: int = 1
     video_interval: int = 5
     recon_log_interval: int = 500
     recon_log_images: int = 8
@@ -966,8 +924,6 @@ def train_dreamer(args):
     env = VideoLoggerWrapper(env, "videos", lambda: step_counter)
     
     # Training state
-    avg_reward_window = 100
-    log_interval_per_step = 10
     episode_scores = np.zeros(config.num_envs)
     avg_score = 0
     avg_losses = {}
@@ -977,6 +933,7 @@ def train_dreamer(args):
     agent.init_hidden_state()
 
     # Training loop
+    prev_num_episodes = len(episode_history)
     while len(episode_history) < config.episodes:
         # Collect experience
         pre_state = agent.hidden_state
@@ -994,6 +951,7 @@ def train_dreamer(args):
             for idx in reset_indices:
                 episode_history.append(episode_scores[idx])
                 episode_scores[idx] = 0
+        num_episodes = len(episode_history)
 
         step_counter += 1
         agent.set_env_step(step_counter)
@@ -1009,13 +967,13 @@ def train_dreamer(args):
                     else:
                         avg_losses[k].append(v)
 
-        if step_counter % log_interval_per_step == 0:
+        if num_episodes > prev_num_episodes and num_episodes % config.log_interval_per_episode == 0:
             # Logging rewards
-            avg_score = np.mean(episode_history[-avg_reward_window:]) if episode_history else 0
+            avg_score = np.mean(episode_history[-config.avg_reward_window:]) if episode_history else 0
             mem_size = agent.replay_buffer.size()
             log_rewards(
                 step_counter, avg_score, best_score, mem_size,
-                len(episode_history), config.episodes
+                num_episodes, config.episodes
             )
 
             # Logging losses
@@ -1026,7 +984,7 @@ def train_dreamer(args):
                 avg_losses = {}
 
         # Periodic checkpoint saving (every 1000 episodes)
-        if len(episode_history) % config.checkpoint_save_interval_per_episode == 0 and len(episode_history) > 0:
+        if num_episodes > prev_num_episodes and num_episodes % config.checkpoint_save_interval_per_episode == 0:
             agent.save_checkpoint(
                 save_prefix, step_counter, episode_history,
                 best_score, best_avg, wandb_run_id, config,
@@ -1049,6 +1007,8 @@ def train_dreamer(args):
                 best_score, best_avg, wandb_run_id, config,
                 checkpoint_type="best_avg"
             )
+
+        prev_num_episodes = num_episodes
 
     print(f"\n✓ Training complete! Best average score: {best_avg:.2f}")
     agent.save_checkpoint(
